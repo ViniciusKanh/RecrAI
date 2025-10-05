@@ -1,0 +1,41 @@
+# --- Python (backend) ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.dist/
+.build/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.pyre/
+.venv/
+venv/
+ENV/
+env/
+*.log
+
+# Env / secrets
+.env
+.env.*
+
+# VSCode / IDE
+.vscode/
+.idea/
+*.iml
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# --- Frontend (static SPA) ---
+# (não usamos build, mas deixa preparado)
+node_modules/
+dist/
+build/
+*.map
+
+# Cache
+.cache/
+.parcel-cache/
