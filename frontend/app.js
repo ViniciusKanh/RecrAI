@@ -2,7 +2,7 @@
  * RecrAI - SPA Frontend (meuapp completo + dashboard PRO)
  * - Sem dependências externas (apenas RemixIcon via index.html)
  * - Canvas puro para gráficos interativos
- * - Sinalização do splash via 'recrAI:ready' (disparado 1x quando a SPA está pronta)
+ * - Dispara 'recrAI:ready' após a 1ª view renderizar (para fechar o splash)
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -31,21 +31,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Renomear menu
   const talentsLink = document.querySelector('.nav-link[data-view="candidates"] span');
   if (talentsLink) talentsLink.textContent = 'Banco de Talentos';
-
-  // =====================================================================
-  // READY SIGNAL (fecha splash com segurança)
-  // =====================================================================
-  function signalReady(reason='') {
-    if (window.__recrai_ready_sent) return;
-    window.__recrai_ready_sent = true;
-    const ev = new Event('recrAI:ready');
-    // opcionalmente, anexe um motivo (debug)
-    ev.detail = { reason };
-    window.dispatchEvent(ev);
-  }
-
-  // fallback de segurança (se nada sinalizar, em 4.2s avisa)
-  setTimeout(() => signalReady('fallback-timeout'), 4200);
 
   // =====================================================================
   // UTILS
@@ -179,15 +164,34 @@ document.addEventListener('DOMContentLoaded', () => {
       { re:/^#\/settings$/,          name:'settings' },
     ];
     const navLinks = [...document.querySelectorAll('.nav-link[data-view]')];
-    const match = (h)=> { for(const r of routes){ const m=h.match(r.re); if(m) return {name:r.name, params:m.slice(1)} } return {name:'dashboard', params:[]} }
-    const highlight = (n)=> navLinks.forEach(a => a.classList.toggle('active', a.dataset.view===n));
-    const render = async (h)=>{ const {name, params} = match(h); highlight(name); await views[name](...params); };
+
+    function match(h){
+      for(const r of routes){ const m=h.match(r.re); if(m) return {name:r.name, params:m.slice(1)} }
+      return {name:'dashboard', params:[]};
+    }
+    function highlight(n){ navLinks.forEach(a => a.classList.toggle('active', a.dataset.view===n)); }
+
+    // render retorna uma Promise que resolve após a view terminar
+    async function render(h){
+      const {name, params} = match(h);
+      highlight(name);
+      if (!views[name]) return;
+      await views[name](...params);
+    }
+
+    let firstRenderDone = false;
     return {
-      async start(){
-        window.addEventListener('hashchange', ()=>render(location.hash));
-        await render(location.hash || '#/');
-        // Sinaliza que a primeira view foi renderizada (SPA está funcional)
-        signalReady('router-started');
+      start(){
+        const doRender = async () => {
+          await render(location.hash || '#/');
+          // dispara o "ready" apenas uma vez, após a 1ª renderização
+          if (!firstRenderDone) {
+            firstRenderDone = true;
+            window.dispatchEvent(new Event('recrAI:ready'));
+          }
+        };
+        window.addEventListener('hashchange', doRender);
+        doRender();
       },
       navigate(p){ if(location.hash!==`#${p}`) location.hash=`#${p}`; }
     };
@@ -395,7 +399,7 @@ document.addEventListener('DOMContentLoaded', () => {
               <canvas id="skills-bar" width="560" height="280" style="max-width:100%"></canvas>
             </div>
 
-            <div class="card" style="grid-column: span 12%;">
+            <div class="card" style="grid-column: span 12;">
               <h3 style="margin-bottom:6px;">Ações rápidas</h3>
               <div style="display:flex;gap:8px;flex-wrap:wrap;">
                 <a class="btn btn-primary" href="#/analyze"><i class="ri-sparkling-2-line"></i> Analisar Currículo</a>
@@ -412,11 +416,8 @@ document.addEventListener('DOMContentLoaded', () => {
       let jobs=[]; let cvs=[];
       async function loadData() {
         try {
-          await fetchJSON('/health');
-          document.getElementById('health-val').innerHTML = `<span style="color:var(--c-success)">Online</span>`;
-        } catch {
-          document.getElementById('health-val').innerHTML = `<span style="color:var(--c-error)">Offline</span>`;
-        }
+          await fetchJSON('/health'); document.getElementById('health-val').innerHTML = `<span style="color:var(--c-success)">Online</span>`;
+        } catch { document.getElementById('health-val').innerHTML = `<span style="color:var(--c-error)">Offline</span>`; }
 
         try {
           const info = await fetchJSON('/info');
@@ -455,7 +456,7 @@ document.addEventListener('DOMContentLoaded', () => {
         scoped.forEach(c=>{
           const d = new Date(c.created_at||Date.now());
           const diff = Math.floor((now - d)/(24*3600*1000));
-          if (diff>=0 && diff<14) byDay[13-diff]++; // da esquerda p/ direita (cronológico)
+          if (diff>=0 && diff<14) byDay[13-diff]++; // cronológico
         });
         drawSparkline(sparkEl, byDay);
 
@@ -508,9 +509,6 @@ document.addEventListener('DOMContentLoaded', () => {
       // inicial
       await loadData();
       renderAll();
-
-      // importante: sinaliza ready após primeira carga real do dashboard
-      signalReady('dashboard-loaded');
       setupAuto();
     },
 
@@ -638,7 +636,6 @@ document.addEventListener('DOMContentLoaded', () => {
             content: html ? `<div class="grid-cards">${html}</div>` : '<div class="empty-state"><p>Nenhum talento encontrado.</p></div>',
             footer: `<a class="btn btn-primary" href="#/candidates">Ir para Banco de Talentos</a>`
           });
-          // reload da tela p/ aparecer a vaga recém criada
           router.navigate('/jobs');
         } catch (err) { showToast(err.message, 'error'); }
       });
@@ -832,7 +829,7 @@ document.addEventListener('DOMContentLoaded', () => {
       appRoot.innerHTML = tpl;
 
       document.getElementById('copy-q').addEventListener('click', ()=> navigator.clipboard.writeText((cv.interview_questions||[]).join('\n')).then(()=>showToast('Copiado!', 'success')));
-      document.getElementById('exp-json').addEventListener('click', ()=>{
+      document.getElementById('exp-json').addEventListener('click', ()=> {
         const blob = new Blob([JSON.stringify(cv, null, 2)], {type:'application/json'});
         const url  = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`recrai_cv_${cv.id}.json`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
       });
@@ -882,8 +879,8 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="card">
             <h3>Conexão</h3>
             <form id="api-form">
-              <div class="form-group"><label for="burl">URL do Backend</label><input id="burl" class="form-control" value="${state.api.url}"></div>
-              <div class="form-group"><label for="pref">Prefixo da API</label><input id="pref" class="form-control" value="${state.api.prefix}"></div>
+              <div class="form-group"><label for="burl">URL do Backend</label><input id="burl" class="form-control" value="\${state.api.url}"></div>
+              <div class="form-group"><label for="pref">Prefixo da API</label><input id="pref" class="form-control" value="\${state.api.prefix}"></div>
               <button class="btn btn-primary">Salvar e testar</button>
             </form>
           </div>
@@ -892,13 +889,13 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="form-group">
               <label for="theme-sel">Tema</label>
               <select id="theme-sel" class="form-control">
-                <option value="light" ${state.theme==='light'?'selected':''}>Claro</option>
-                <option value="dark" ${state.theme==='dark'?'selected':''}>Escuro</option>
+                <option value="light" \${state.theme==='light'?'selected':''}>Claro</option>
+                <option value="dark" \${state.theme==='dark'?'selected':''}>Escuro</option>
               </select>
             </div>
           </div>
         </div>`;
-      appRoot.innerHTML = tpl;
+      appRoot.innerHTML = tpl.replace(/\$\{(.+?)\}/g, (_,expr)=>eval(expr));
 
       document.getElementById('api-form').addEventListener('submit', async (e)=>{
         e.preventDefault();
@@ -925,14 +922,10 @@ document.addEventListener('DOMContentLoaded', () => {
     applyTheme();
   });
 
-  // header shrink (caso o splash já tenha fechado)
-  const header = document.getElementById('main-header');
-  window.addEventListener('scroll', () => {
-    const y = window.scrollY || 0;
-    header?.classList.toggle('shrink', y > 8);
-  }, {passive:true});
-
+  // tema + rota inicial
   applyTheme();
   if (!location.hash) location.hash = '#/';
-  router.start(); // sinaliza ready dentro de start() e/ou dashboard()
+
+  // inicia o router (ele disparará 'recrAI:ready' após a 1ª view)
+  router.start();
 });
